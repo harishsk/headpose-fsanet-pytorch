@@ -69,7 +69,7 @@ class DatasetFromSubset(Dataset):
         x, y = self.subset[index]
         if self.transform:
             x = self.transform(x)
-        return x, y
+        return x.float(), y
 
     def __len__(self):
         return len(self.subset)
