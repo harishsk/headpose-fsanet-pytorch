@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import multiprocessing
 
-
+import argparse import ArgumentParser
 from dataset import HeadposeDataset, DatasetFromSubset
 from datetime import datetime
 from model import FSANet
@@ -10,6 +10,7 @@ from model import FSANet
 from pytorch_lightning.callbacks import TQDMProgressBar
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning.plugins import DDPPlugin
+from pytorch_lightning.plugins.training_type.ddp import DDPPlugin
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -27,6 +28,7 @@ class HeadPoseModel(LightningModule):
         self.fsanet = FSANet(use_variance)
         self.learning_rate = 0.001
         self.loss_fn = torch.nn.L1Loss()
+        self.example_input_array = troch.randn(1, 3, 64, 64)
 
     def forward(self, x):
         return self.fsanet(x)
@@ -60,7 +62,15 @@ def convert_to_onnx(model, filename):
                 dynamic_axes = {'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}} )
     return
 
+def get_args():
+    parser = ArgumentParser()
+    parser.add_argument('epochs', type=int, help='Number of epochs to run')
+    args =  praser.parse_args()
+    return args
+
 def main():
+    args = get_args()
+
     data_path = '../data/type1/train'
     dataset = HeadposeDataset(data_path, transform=None)
 
@@ -87,17 +97,17 @@ def main():
     batch_size = 16
     num_cpus = multiprocessing.cpu_count()
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_cpus, pin_memory=True)
-    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
+    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False, num_workers=num_cpus, pin_memory=True)
 
-    logger = TensorBoardLogger('logs', name='HeadPoseModel', log_graph=False)
+    logger = TensorBoardLogger('logs', name='HeadPoseModel', log_graph=True)
 
-    num_epochs = 100000
+    num_epochs = args.epochs
     for use_variance in [False, True]:
         model = HeadPoseModel(use_variance)
         callbacks = [TQDMProgressBar()]
-        trainer = Trainer(accelerator="gpu", devices=-1, 
-                          max_epochs=num_epochs, logger=logger, callbacks=callbacks,
-                          plugins=DDPPlugin(find_unused_parameters=False))
+
+        trainer = Trainer(strategy=DDPPlugin(find_unused_parameters=False), accelerator="gpu", devices=-1, 
+                          max_epochs=num_epochs, logger=logger, callbacks=callbacks)
         trainer.fit(model, train_loader, validation_loader)
 
         scoring_funtion_type = 'var' if use_variance else '1x1'
